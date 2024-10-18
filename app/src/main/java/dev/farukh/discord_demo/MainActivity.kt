@@ -197,10 +197,11 @@ class MainActivity : ComponentActivity() {
 
         socket.emit("producer-closed", obj)
         socket.emit("webrtc_leave")
+        socket.emit("pageUnmount")
 
         delay(2000)
 
-        socket.disconnect()
+//        socket.disconnect()
 
         println("send close")
     }
@@ -316,6 +317,7 @@ class MainActivity : ComponentActivity() {
                     transport: Transport?,
                     connectionState: String?
                 ) {
+                    println(connectionState)
                 }
 
                 override fun onProduce(
