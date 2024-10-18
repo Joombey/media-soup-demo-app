@@ -10,13 +10,13 @@ import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import android.util.Log
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.result.launch
 import androidx.activity.result.registerForActivityResult
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedTextField
@@ -24,7 +24,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.lifecycleScope
@@ -47,7 +46,6 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import org.mediasoup.droid.Device
-import org.mediasoup.droid.MediasoupClient
 import org.mediasoup.droid.PeerConnection
 import org.mediasoup.droid.Producer
 import org.mediasoup.droid.SendTransport
@@ -60,6 +58,8 @@ import org.webrtc.ScreenCapturerAndroid
 import org.webrtc.SurfaceTextureHelper
 import org.webrtc.VideoDecoderFactory
 import org.webrtc.VideoEncoderFactory
+import org.webrtc.VideoSource
+import org.webrtc.VideoTrack
 import org.webrtc.audio.AudioDeviceModule
 import org.webrtc.audio.JavaAudioDeviceModule
 import org.webrtc.audio.JavaAudioDeviceModule.AudioRecordErrorCallback
@@ -71,103 +71,184 @@ typealias RTCConfiguration = org.webrtc.PeerConnection.RTCConfiguration
 
 class MainActivity : ComponentActivity() {
     private val connected = MutableStateFlow(false)
+
     private var _socket: Socket? = null
     private val api = Api()
     private val socket get() = _socket!!
-    private val eagleContext = EglBase.create()
 
-    private val peerFactory by lazy { createPeerConnectionFactory(this) }
-
-    private val videoSource by lazy { peerFactory.createVideoSource(true) }
-
-    private val videoTrack by lazy {
-        initScreenCapture(screenCapture)
-        peerFactory.createVideoTrack("share", videoSource)
-    }
-
-    lateinit var sendTransport: SendTransport
-
-    private val device by lazy { Device() }
-
-    private val screenCapture by lazy { getScreenCapture(data!!) }
-
+    private var eagleContext: EglBase? = null
+    private var peerFactory: PeerConnectionFactory? = null
+    private var adm: AudioDeviceModule? = null
+    private var videSource: VideoSource? = null
+    private var videoTrack: VideoTrack? = null
+    private var sendTransport: SendTransport? = null
+    private var device: Device? = Device()
+    private var screenCapture: ScreenCapturerAndroid? = null
     private var data: Intent? = null
     private var producer: Producer? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        lifecycleScope.launch {
-            getScreenCastIntentData()
-        }
+        lifecycleScope.launch { getScreenCastIntentData() }
+        peerFactory = createPeerConnectionFactory(this)
         connectToServer()
         startService()
-        MediasoupClient.initialize(this.applicationContext)
         setContent {
             var value by remember { mutableStateOf("") }
-            val scope = rememberCoroutineScope()
             Column {
                 Button(
-                    {
-                        scope.launch {
-                            val response = api.service.webRTCGetClientRooms()
-                            println("room ${response.body()?.rooms?.size}")
-                            val room = response.body()!!.rooms.first()
-                            println("room $room")
-                            videoTrack.setEnabled(true)
+                    onClick = ::start,
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("start") }
 
-                            val rtpCapabilities = joinRoom(room.roomID, room.roomLabel)!!
-                            println("capabilities ${JSONObject(rtpCapabilities).optString("rtpCapabilities")}")
-                            val creds2 = api.service.getCredentials().body()!!
-                            if (!device.isLoaded) {
-                                device.load(
-                                    JSONObject(rtpCapabilities).optString("rtpCapabilities"),
-                                    PeerConnection.Options().apply {
-                                        setFactory(peerFactory)
-                                        setRTCConfig(
-                                            RTCConfiguration(
-                                                listOf(
-                                                    IceServers.builder(listOf("turn:turn.stormapi.su:3479"))
-                                                        .setUsername(creds2.username)
-                                                        .setPassword(creds2.password)
-                                                        .createIceServer()
-                                                )
-                                            )
-                                        )
-                                    })
-                            }
-
-                            val transport = JSONObject(getWebRTCTransport())
-                            println("tranport $transport")
-
-                            val creds = api.service.getCredentials()
-                            sendTransport = createSendTransport(
-                                transport.getJSONObject("params"),
-                                room,
-                                creds.body()
-                            )
-                            try {
-                                producer = sendTransport.produce(
-                                    { },
-                                    videoTrack,
-                                    null,
-                                    null,
-                                    null
-                                )
-                            } catch (e: Exception) {
-                                println(e.stackTraceToString())
-                                null
-                            }
-
-                        }
-                    },
-                    Modifier.fillMaxWidth()
-                ) { Text("test") }
-                OutlinedTextField(value, {value = it})
+                Button(
+                    onClick = ::stop,
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("stop") }
+                OutlinedTextField(value, {value = it}, Modifier.fillMaxWidth())
             }
         }
     }
 
     private fun start() {
+        lifecycleScope.launch {
+            if (!socket.connected()) {
+                connectToServer()
+                delay(1000)
+            }
+            if (videoTrack == null) {
+                if (screenCapture == null) {
+                    screenCapture = getScreenCapture(data!!)
+                }
+                if (peerFactory == null) {
+                    peerFactory = createPeerConnectionFactory(applicationContext)
+                }
+                if (videSource == null) {
+                    videSource = peerFactory!!.createVideoSource(true)
+                }
+                initScreenCapture(screenCapture!!)
+                videoTrack = peerFactory!!.createVideoTrack("share", videSource)
+            }
+            videoTrack!!.setEnabled(true)
+            if (device == null) {
+                device = Device()
+            }
+
+            val response = api.service.webRTCGetClientRooms()
+            println("room ${response.body()?.rooms?.size}")
+
+            val room = response.body()!!.rooms.first()
+            println("room $room")
+
+            val rtpCapabilities = joinRoom(room.roomID, room.roomLabel)!!
+            println("capabilities ${JSONObject(rtpCapabilities).optString("rtpCapabilities")}")
+
+            val deviceCreds = api.service.getCredentials().body()!!
+            if (device?.isLoaded == false) {
+                device?.load(
+                    JSONObject(rtpCapabilities).optString("rtpCapabilities"),
+                    PeerConnection.Options().apply {
+                        setFactory(peerFactory)
+                        setRTCConfig(
+                            RTCConfiguration(
+                                listOf(
+                                    IceServers.builder(listOf("turn:turn.stormapi.su:3479"))
+                                        .setUsername(deviceCreds.username)
+                                        .setPassword(deviceCreds.password)
+                                        .createIceServer()
+                                )
+                            )
+                        )
+                    })
+            }
+
+            val transport = JSONObject(getWebRTCTransport())
+            println("tranport $transport")
+
+            val creds = api.service.getCredentials().body()!!
+
+            sendTransport?.dispose()
+            sendTransport = createSendTransport(
+                transport.getJSONObject("params"),
+                room,
+                creds
+            )
+
+            producer?.close()
+            producer = try {
+                sendTransport!!.produce(
+                    {  },
+                    videoTrack,
+                    null,
+                    null,
+                    null
+                )
+            } catch (e: Exception) {
+                println(e.stackTraceToString())
+                Toast.makeText(this@MainActivity, "couldn't create producer", Toast.LENGTH_SHORT).show()
+                null
+            }
+        }
+    }
+
+    private suspend fun sendOnDisconnect(producer: Producer) {
+        val innerObj = JSONObject().apply { put("id", producer.id) }
+        val obj = JSONObject().apply { put("remoteProducerId", innerObj) }
+
+        socket.emit("producer-closed", obj)
+        socket.emit("webrtc_leave")
+
+        delay(2000)
+
+        socket.disconnect()
+
+        println("send close")
+    }
+
+    private fun stop() {
+        /**
+         * eagleContext
+         * peerFactory
+         * adm
+         * videSource
+         * videoTrack
+         * sendTransport
+         * device
+         * screenCapture
+         */
+
+        lifecycleScope.launch {
+            sendOnDisconnect(producer!!)
+
+            producer?.close()
+            producer = null
+
+            sendTransport?.close()
+            sendTransport?.dispose()
+            sendTransport = null
+
+            device?.dispose()
+            device = null
+
+//            videoTrack?.setEnabled(false)
+//            videoTrack?.dispose()
+//            videoTrack = null
+//
+//            screenCapture?.dispose()
+//            screenCapture = null
+//
+//            videSource?.dispose()
+//            videSource = null
+//
+//            peerFactory?.dispose()
+//            peerFactory = null
+//
+//            adm?.release()
+//            adm = null
+//
+//            eagleContext?.release()
+//            eagleContext = null
+        }
 
     }
 
@@ -223,15 +304,12 @@ class MainActivity : ComponentActivity() {
         val dtlsParameters: String = json.optString("dtlsParameters")
         val sctpParameters: String? = json.optString("sctpParameters").ifEmpty { null }
 
-        return device.createSendTransport(
+        return device!!.createSendTransport(
             object : SendTransport.Listener {
                 override fun onConnect(transport: Transport, dtlsParameters: String) {
                     val dtls = api.gson.fromJson(dtlsParameters, DtlsParameters::class.java)
                     val obj = DtlsParametersWrapper(dtls)
-                    runBlocking {
-                        sendOnConnect(dtlsParameters, transport.id, room.roomID, obj)
-                        delay(2000)
-                    }
+                    sendOnConnect(dtlsParameters, transport.id, room.roomID, obj)
                 }
 
                 override fun onConnectionStateChange(
@@ -246,7 +324,7 @@ class MainActivity : ComponentActivity() {
                     rtpParameters: String,
                     appData: String
                 ): String? {
-                    return runBlocking {
+                    val id = runBlocking {
                         println("onProduce: ")
                         withTimeoutOrNull(5_000) {
                             sendNewProducer(
@@ -255,9 +333,11 @@ class MainActivity : ComponentActivity() {
                                 rtpParameters,
                                 appData,
                                 dtlsParameters
-                            ).also { println(it) }
+                            )
                         }
                     }
+                    println("id: $id")
+                    return id ?: ""
                 }
 
                 override fun onProduceData(
@@ -280,7 +360,6 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 }
-
             },
             id,
             iceParameters,
@@ -327,16 +406,20 @@ class MainActivity : ComponentActivity() {
         val builder = PeerConnectionFactory.builder()
         builder.setOptions(null)
 
-        val adm: AudioDeviceModule = createJavaAudioDevice(context)
+        if (adm == null) {
+            adm = createJavaAudioDevice(context)
+        }
+        if (eagleContext == null) {
+            eagleContext = EglBase.create()
+        }
         val encoderFactory: VideoEncoderFactory =
             DefaultVideoEncoderFactory(
-                eagleContext.eglBaseContext,
+                eagleContext!!.eglBaseContext,
                 true,  /* enableIntelVp8Encoder */
                 true
             )
         val decoderFactory: VideoDecoderFactory =
-            DefaultVideoDecoderFactory(eagleContext.eglBaseContext)
-
+            DefaultVideoDecoderFactory(eagleContext!!.eglBaseContext)
         return builder
             .setAudioDeviceModule(adm)
             .setVideoEncoderFactory(encoderFactory)
@@ -419,6 +502,7 @@ class MainActivity : ComponentActivity() {
             "transport-produce",
             obj,
             Ack {
+                println(it.contentToString())
                 val json = JSONObject(it.first().toString())
                 cont.resumeWith(Result.success(json.optString("id")))
             }
@@ -427,8 +511,8 @@ class MainActivity : ComponentActivity() {
 
     private fun initScreenCapture(screenCapture: ScreenCapturerAndroid) {
         val surfaceTextureHelper =
-            SurfaceTextureHelper.create("CaptureThread", eagleContext.eglBaseContext)
-        screenCapture.initialize(surfaceTextureHelper, this, videoSource.capturerObserver)
+            SurfaceTextureHelper.create("CaptureThread", eagleContext!!.eglBaseContext)
+        screenCapture.initialize(surfaceTextureHelper, this, videSource!!.capturerObserver)
         screenCapture.startCapture(1920, 1080, 30)
     }
 
@@ -473,17 +557,5 @@ class MainActivity : ComponentActivity() {
         socket.on(Socket.EVENT_CONNECT) { connected.update { true } }
         socket.on(Socket.EVENT_CONNECT_ERROR) { connected.update { false } }
         socket.on(Socket.EVENT_DISCONNECT) { connected.update { false } }
-    }
-
-    override fun onStop() {
-        socket.emit("webrtc_leave")
-        socket.disconnect()
-        producer?.close()
-        val innerObj = JSONObject().apply {
-            put("id", producer!!.id)
-        }
-        val obj = JSONObject().apply { put("remoteProducerId", innerObj) }
-        socket.emit("producer-closed", obj)
-        super.onStop()
     }
 }
