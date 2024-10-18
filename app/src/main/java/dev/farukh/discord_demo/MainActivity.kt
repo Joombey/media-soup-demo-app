@@ -15,10 +15,17 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.result.launch
 import androidx.activity.result.registerForActivityResult
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.Button
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.lifecycleScope
 import dev.farukh.discord_demo.models.ConsumeApiModel
@@ -94,63 +101,67 @@ class MainActivity : ComponentActivity() {
         startService()
         MediasoupClient.initialize(this.applicationContext)
         setContent {
+            var value by remember { mutableStateOf("") }
             val scope = rememberCoroutineScope()
-            Button(
-                {
-                    scope.launch {
-                        val response = api.service.webRTCGetClientRooms()
-                        println("room ${response.body()?.rooms?.size}")
-                        val room = response.body()!!.rooms.first()
-                        println("room $room")
-                        videoTrack.setEnabled(true)
+            Column {
+                Button(
+                    {
+                        scope.launch {
+                            val response = api.service.webRTCGetClientRooms()
+                            println("room ${response.body()?.rooms?.size}")
+                            val room = response.body()!!.rooms.first()
+                            println("room $room")
+                            videoTrack.setEnabled(true)
 
-                        val rtpCapabilities = joinRoom(room.roomID, room.roomLabel)!!
-                        println("capabilities ${JSONObject(rtpCapabilities).optString("rtpCapabilities")}")
-                        val creds2 = api.service.getCredentials().body()!!
-                        if (!device.isLoaded) {
-                            device.load(
-                                JSONObject(rtpCapabilities).optString("rtpCapabilities"),
-                                PeerConnection.Options().apply {
-                                    setFactory(peerFactory)
-                                    setRTCConfig(
-                                        RTCConfiguration(
-                                            listOf(
-                                                IceServers.builder(listOf("turn:turn.stormapi.su:3479"))
-                                                    .setUsername(creds2.username)
-                                                    .setPassword(creds2.password)
-                                                    .createIceServer()
+                            val rtpCapabilities = joinRoom(room.roomID, room.roomLabel)!!
+                            println("capabilities ${JSONObject(rtpCapabilities).optString("rtpCapabilities")}")
+                            val creds2 = api.service.getCredentials().body()!!
+                            if (!device.isLoaded) {
+                                device.load(
+                                    JSONObject(rtpCapabilities).optString("rtpCapabilities"),
+                                    PeerConnection.Options().apply {
+                                        setFactory(peerFactory)
+                                        setRTCConfig(
+                                            RTCConfiguration(
+                                                listOf(
+                                                    IceServers.builder(listOf("turn:turn.stormapi.su:3479"))
+                                                        .setUsername(creds2.username)
+                                                        .setPassword(creds2.password)
+                                                        .createIceServer()
+                                                )
                                             )
                                         )
-                                    )
-                                })
-                        }
+                                    })
+                            }
 
-                        val transport = JSONObject(getWebRTCTransport())
-                        println("tranport $transport")
+                            val transport = JSONObject(getWebRTCTransport())
+                            println("tranport $transport")
 
-                        val creds = api.service.getCredentials()
-                        sendTransport = createSendTransport(
-                            transport.getJSONObject("params"),
-                            room,
-                            creds.body()
-                        )
-                        try {
-                            val producer = sendTransport.produce(
-                                { },
-                                videoTrack,
-                                null,
-                                null,
-                                null
+                            val creds = api.service.getCredentials()
+                            sendTransport = createSendTransport(
+                                transport.getJSONObject("params"),
+                                room,
+                                creds.body()
                             )
-                        } catch (e: Exception) {
-                            println(e.stackTraceToString())
-                            null
-                        }
+                            try {
+                                val producer = sendTransport.produce(
+                                    { },
+                                    videoTrack,
+                                    null,
+                                    null,
+                                    null
+                                )
+                            } catch (e: Exception) {
+                                println(e.stackTraceToString())
+                                null
+                            }
 
-                    }
-                },
-                Modifier.fillMaxSize()
-            ) { Text("test") }
+                        }
+                    },
+                    Modifier.fillMaxWidth()
+                ) { Text("test") }
+                OutlinedTextField(value, {value = it})
+            }
         }
     }
 
