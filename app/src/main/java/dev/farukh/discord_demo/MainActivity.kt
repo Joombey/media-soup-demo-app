@@ -49,6 +49,7 @@ import org.json.JSONObject
 import org.mediasoup.droid.Device
 import org.mediasoup.droid.MediasoupClient
 import org.mediasoup.droid.PeerConnection
+import org.mediasoup.droid.Producer
 import org.mediasoup.droid.SendTransport
 import org.mediasoup.droid.Transport
 import org.webrtc.DefaultVideoDecoderFactory
@@ -91,6 +92,7 @@ class MainActivity : ComponentActivity() {
     private val screenCapture by lazy { getScreenCapture(data!!) }
 
     private var data: Intent? = null
+    private var producer: Producer? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -144,7 +146,7 @@ class MainActivity : ComponentActivity() {
                                 creds.body()
                             )
                             try {
-                                val producer = sendTransport.produce(
+                                producer = sendTransport.produce(
                                     { },
                                     videoTrack,
                                     null,
@@ -163,6 +165,10 @@ class MainActivity : ComponentActivity() {
                 OutlinedTextField(value, {value = it})
             }
         }
+    }
+
+    private fun start() {
+
     }
 
     private fun startService() {
@@ -467,5 +473,17 @@ class MainActivity : ComponentActivity() {
         socket.on(Socket.EVENT_CONNECT) { connected.update { true } }
         socket.on(Socket.EVENT_CONNECT_ERROR) { connected.update { false } }
         socket.on(Socket.EVENT_DISCONNECT) { connected.update { false } }
+    }
+
+    override fun onStop() {
+        socket.emit("webrtc_leave")
+        socket.disconnect()
+        producer?.close()
+        val innerObj = JSONObject().apply {
+            put("id", producer!!.id)
+        }
+        val obj = JSONObject().apply { put("remoteProducerId", innerObj) }
+        socket.emit("producer-closed", obj)
+        super.onStop()
     }
 }
