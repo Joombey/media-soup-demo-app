@@ -4,28 +4,37 @@ import android.net.wifi.hotspot2.pps.Credential.UserCredential
 import android.util.Log
 import com.google.gson.GsonBuilder
 import com.google.gson.Strictness
+import com.google.gson.annotations.SerializedName
 import dev.farukh.discord_demo.models.Credentials
 import dev.farukh.discord_demo.models.RoomsApiModel
+import okhttp3.Cookie
+import okhttp3.CookieJar
+import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.ResponseBody
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Response
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
+import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.Header
 import retrofit2.http.Headers
+import retrofit2.http.POST
 
-class Api {
+class Api: CookieJar {
     val service: ApiService
     val gson = GsonBuilder()
         .setStrictness(Strictness.LENIENT)
         .setPrettyPrinting()
         .create()
 
+    var refreshToken = ""
+    var accessToken = ""
+
     init {
         service = Retrofit.Builder()
-            .baseUrl("https://manage.stormapi.su/")
+            .baseUrl("https://testmanage.stormapi.su/")
             .addConverterFactory(GsonConverterFactory.create(gson))
             .client(OkHttpClient.Builder()
                 .addInterceptor(
@@ -33,12 +42,40 @@ class Api {
                         Log.i("api", it)
                     }.apply { level = HttpLoggingInterceptor.Level.BODY }
                 )
+                .cookieJar(this)
                 .addInterceptor { chain ->
                     val newRequest = chain.request().newBuilder()
                         .build()
                     chain.proceed(newRequest)
                 }.build()
             ).build().create(ApiService::class.java)
+    }
+
+    override fun loadForRequest(url: HttpUrl): List<Cookie> {
+        return listOf(
+            Cookie.Builder()
+                .name("accessToken")
+                .value(accessToken)
+                .domain("testmanage.stormapi.su")
+                .httpOnly()
+                .build(),
+            Cookie.Builder()
+                .name("refreshToken")
+                .value(refreshToken)
+                .domain("testmanage.stormapi.su")
+                .httpOnly()
+                .build()
+        )
+    }
+
+    override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
+        for (cookie in cookies) {
+            if (cookie.name == "accessToken") {
+                accessToken = cookie.value
+            } else if (cookie.name == "refreshToken") {
+                refreshToken = cookie.value
+            }
+        }
     }
 }
 
@@ -51,17 +88,23 @@ const val PROD_AUTH = "authorization: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzd
 const val PROD_TURN = "apikey:615399d4eaa2752574b7c21d28b5cde1db27c9b4bed6cccc4735076e9a470eab"
 
 interface ApiService {
-    @Headers(
-        PROD_API_KEY,
-        PROD_AUTH,
-    )
+    @Headers(TEST_API_KEY,)
     @GET("api/calls/webrtc_getClientRooms")
-    suspend fun webRTCGetClientRooms(): Response<RoomsApiModel>
+    suspend fun webRTCGetClientRooms(@Header("Authorization", allowUnsafeNonAsciiValues = true) auth: String): Response<RoomsApiModel>
 
-    @Headers(
-        PROD_AUTH,
-        PROD_TURN
-    )
+    @Headers(TEST_TURN)
     @GET("/api/turnInfo/getCredentials")
-    suspend fun getCredentials(): Response<Credentials>
+    suspend fun getCredentials(@Header("Authorization", allowUnsafeNonAsciiValues = true) auth: String): Response<Credentials>
+
+    @Headers(TEST_API_KEY)
+    @POST("/api/device/checkWLAndToken")
+    suspend fun login(@Body body: RequestId): Response<ResponseBody>
 }
+
+data class RequestId(
+    @SerializedName("device_id")
+    val deviceId: String,
+
+    @SerializedName("login")
+    val password: String
+)

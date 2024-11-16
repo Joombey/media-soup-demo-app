@@ -54,6 +54,7 @@ import org.webrtc.DefaultVideoDecoderFactory
 import org.webrtc.DefaultVideoEncoderFactory
 import org.webrtc.EglBase
 import org.webrtc.PeerConnectionFactory
+import org.webrtc.RtpParameters
 import org.webrtc.ScreenCapturerAndroid
 import org.webrtc.SurfaceTextureHelper
 import org.webrtc.VideoDecoderFactory
@@ -64,6 +65,8 @@ import org.webrtc.audio.AudioDeviceModule
 import org.webrtc.audio.JavaAudioDeviceModule
 import org.webrtc.audio.JavaAudioDeviceModule.AudioRecordErrorCallback
 import org.webrtc.audio.JavaAudioDeviceModule.AudioTrackErrorCallback
+import java.math.BigInteger
+import java.security.MessageDigest
 
 typealias WebRTCPeerConnection = org.webrtc.PeerConnection
 typealias IceServers = org.webrtc.PeerConnection.IceServer
@@ -116,6 +119,7 @@ class MainActivity : ComponentActivity() {
                 connectToServer()
                 delay(1000)
             }
+            api.service.login(RequestId("e503a9d1e4b221f5", md5("1234")))
             if (videoTrack == null) {
                 if (screenCapture == null) {
                     screenCapture = getScreenCapture(data!!)
@@ -134,7 +138,9 @@ class MainActivity : ComponentActivity() {
                 device = Device()
             }
 
-            val response = api.service.webRTCGetClientRooms()
+            val response = api.service.webRTCGetClientRooms(
+                "Bearer ${api.accessToken}"
+            )
             println("room ${response.body()?.rooms?.size}")
 
             val room = response.body()!!.rooms.first()
@@ -143,7 +149,9 @@ class MainActivity : ComponentActivity() {
             val rtpCapabilities = joinRoom(room.roomID, room.roomLabel)!!
             println("capabilities ${JSONObject(rtpCapabilities).optString("rtpCapabilities")}")
 
-            val deviceCreds = api.service.getCredentials().body()!!
+            val deviceCreds = api.service.getCredentials(
+                "Bearer ${api.accessToken}"
+            ).body()!!
             if (device?.isLoaded == false) {
                 device?.load(
                     JSONObject(rtpCapabilities).optString("rtpCapabilities"),
@@ -165,7 +173,9 @@ class MainActivity : ComponentActivity() {
             val transport = JSONObject(getWebRTCTransport())
             println("tranport $transport")
 
-            val creds = api.service.getCredentials().body()!!
+            val creds = api.service.getCredentials(
+                "Bearer ${api.accessToken}"
+            ).body()!!
 
             sendTransport?.dispose()
             sendTransport = createSendTransport(
@@ -189,6 +199,10 @@ class MainActivity : ComponentActivity() {
                 null
             }
         }
+    }
+    fun md5(input: String): String {
+        val md = MessageDigest.getInstance("MD5")
+        return BigInteger(1, md.digest(input.toByteArray())).toString(16).padStart(32, '0')
     }
 
     private suspend fun sendOnDisconnect(producer: Producer) {
@@ -496,6 +510,7 @@ class MainActivity : ComponentActivity() {
             """.trimIndent()
         )
         val obj = JSONObject().apply {
+            put("isEnabled", true)
             put("kind", kind)
             put("rtpParameters", JSONObject(rtpParameters))
             put("appData", JSONObject(appData))
@@ -554,7 +569,7 @@ class MainActivity : ComponentActivity() {
         val options = Options.builder()
             .setQuery("userId=e503a9d1e4b221f5")
             .build()
-        _socket = IO.socket("https://manage.stormapi.su/", options)
+        _socket = IO.socket("https://testmanage.stormapi.su/", options)
         socket.connect()
         socket.on(Socket.EVENT_CONNECT) { connected.update { true } }
         socket.on(Socket.EVENT_CONNECT_ERROR) { connected.update { false } }
