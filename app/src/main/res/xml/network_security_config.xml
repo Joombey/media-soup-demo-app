@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">192.168.31.128</domain>
+        <trust-anchors>
+            <certificates src="@raw/root_ca"/>
+            <certificates src="@raw/root_ca_2"/>
+        </trust-anchors>
+    </domain-config>
+</network-security-config>

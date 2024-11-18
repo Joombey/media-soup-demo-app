@@ -20,7 +20,7 @@ data class DtlsParametersWrapper(
     val dtlsParameters: DtlsParameters
 ) {
     // Method to convert the data class to JSONObject
-    fun asJsonObject(transportId: String): JSONObject {
+    fun asJsonObject(): JSONObject {
         // Create the JSONObject for fingerprints
         val fingerprintsJsonArray = JSONArray().apply {
             for (fingerprint in dtlsParameters.fingerprints) {
@@ -40,7 +40,6 @@ data class DtlsParametersWrapper(
         // Create the final JSONObject
         return JSONObject().apply {
             put("dtlsParameters", dtlsJsonObject)
-            put("serverConsumerTransportId", transportId)
         }
     }
 }
